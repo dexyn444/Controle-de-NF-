@@ -46,7 +46,7 @@
 
         <section class="queue-section">
             <div class="section-header">
-                <h3>Fila do Dia Atual</h3>
+                <h3>Fila do Dia Selecionado</h3>
                 <button id="btn-clear-done" class="btn-secondary-sm">Limpar Impressas da Tela</button>
             </div>
             
@@ -61,7 +61,7 @@
                         </tr>
                     </thead>
                     <tbody id="nf-rows">
-                        <!-- Gerado dinamicamente -->
+                        <!-- Gerado dinamicamente via script.js -->
                     </tbody>
                 </table>
             </div>
@@ -88,9 +88,24 @@
             </div>
         </div>
 
+        <!-- Módulo de Histórico de Dias Anteriores -->
+        <div class="metrics-card history-card">
+            <h4>Consultar Dias Anteriores</h4>
+            <hr>
+            <div style="margin-bottom: 10px;">
+                <select id="select-history-days" style="width: 100%; padding: 8px; font-family: monospace; border-radius: 4px; border: 1px solid #ccc;">
+                    <!-- Preenchido dinamicamente via JS -->
+                </select>
+            </div>
+            <div style="display: flex; gap: 5px;">
+                <button id="btn-load-history" class="btn-secondary-sm" style="flex: 1; padding: 6px;">Visualizar Dia</button>
+                <button id="btn-back-to-today" class="btn-primary-sm hidden" style="flex: 1; padding: 6px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Voltar para Hoje</button>
+            </div>
+        </div>
+
         <!-- Módulo de Métricas -->
         <div class="metrics-card">
-            <h4>Métricas do Dia</h4>
+            <h4>Métricas do Dia Selecionado</h4>
             <hr>
             <div class="metric-row">
                 <span>Total no Dia:</span>
@@ -108,6 +123,7 @@
     </aside>
 </div>
 
+<!-- Vínculo com o arquivo de lógica isolado -->
 <script src="script.js"></script>
 </body>
 </html>
