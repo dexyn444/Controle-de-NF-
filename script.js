@@ -1,10 +1,14 @@
-// Obtém a data de trabalho atual (Formato: DD/MM/AAAA)
+// Data real de hoje (Usa o padrão do navegador)
 const hoje = new Date().toLocaleDateString('pt-BR');
 document.getElementById('current-work-date').textContent = hoje;
 
-// Banco de dados persistente carregado com base na Data de Trabalho atual
-let queue = JSON.parse(localStorage.getItem(`nfs_${hoje}`)) || [];
+// Controla qual data está carregada na tela (pode ser hoje ou um dia do passado)
+let dataTrabalhoAtiva = hoje;
 
+// Banco de dados dinâmico baseado na data ativa
+let queue = JSON.parse(localStorage.getItem(`nfs_${dataTrabalhoAtiva}`)) || [];
+
+// Elementos da Interface
 const entryForm = document.getElementById('nf-entry-form');
 const nfInput = document.getElementById('nf-input');
 const rowsContainer = document.getElementById('nf-rows');
@@ -26,15 +30,98 @@ const mPending = document.getElementById('metric-pending');
 const mEfficiency = document.getElementById('metric-efficiency');
 const iaInsights = document.getElementById('ia-insights');
 
-let isScannerMode = false;
+// Elementos do Componente de Histórico
+const selectHistoryDays = document.getElementById('select-history-days');
+const btnLoadHistory = document.getElementById('btn-load-history');
+const btnBackToToday = document.getElementById('btn-back-to-today');
 
-// Salva dados no LocalStorage isolados por dia
+let isScannerMode = false;
+let ocultarImpressasVisualmente = false;
+
+// Salva dados no LocalStorage isolados por data ativa
 function salvarDados() {
-    localStorage.setItem(`nfs_${hoje}`, JSON.stringify(queue));
+    localStorage.setItem(`nfs_${dataTrabalhoAtiva}`, JSON.stringify(queue));
+    // Só guarda no índice de dias se as notas forem criadas no dia de hoje
+    if (dataTrabalhoAtiva === hoje) {
+        registrarDiaNoIndice(hoje);
+    }
+}
+
+// Cria uma lista separada de dias que já possuem alguma nota salva
+function registrarDiaNoIndice(data) {
+    let diasRegistrados = JSON.parse(localStorage.getItem('nfs_index_days')) || [];
+    if (!diasRegistrados.includes(data)) {
+        diasRegistrados.push(data);
+        localStorage.setItem('nfs_index_days', JSON.stringify(diasRegistrados));
+    }
+    atualizarSelectHistorico();
+}
+
+// Recarrega o dropdown de datas com os dias armazenados
+function atualizarSelectHistorico() {
+    let diasRegistrados = JSON.parse(localStorage.getItem('nfs_index_days')) || [];
+    
+    if (!diasRegistrados.includes(hoje)) {
+        diasRegistrados.unshift(hoje);
+    }
+
+    selectHistoryDays.innerHTML = '';
+    diasRegistrados.forEach(dia => {
+        const option = document.createElement('option');
+        option.value = dia;
+        option.textContent = dia === hoje ? `${dia} (Hoje)` : dia;
+        if (dia === dataTrabalhoAtiva) option.selected = true;
+        selectHistoryDays.appendChild(option);
+    });
+}
+
+// Carrega as informações do dia escolhido no select
+btnLoadHistory.addEventListener('click', () => {
+    const diaSelecionado = selectHistoryDays.value;
+    if (!diaSelecionado) return;
+
+    dataTrabalhoAtiva = diaSelecionado;
+    queue = JSON.parse(localStorage.getItem(`nfs_${dataTrabalhoAtiva}`)) || [];
+    
+    document.getElementById('current-work-date').textContent = dataTrabalhoAtiva;
+    ocultarImpressasVisualmente = false;
+
+    // Se estiver lendo o passado, bloqueia inserções por segurança
+    if (dataTrabalhoAtiva !== hoje) {
+        nfInput.disabled = true;
+        btnSubmit.disabled = true;
+        nfInput.placeholder = "Bloqueado: Visualizando dia histórico...";
+        btnBackToToday.classList.remove('hidden');
+        iaInsights.innerHTML = `📜 <strong>Modo Consulta:</strong> Você está revisando os registros do dia <strong>${dataTrabalhoAtiva}</strong>. Inserções desativadas para proteger o histórico.`;
+    } else {
+        restaurarDiaAtual();
+    }
+
+    render();
+});
+
+// Reseta o painel de volta para o dia de hoje
+btnBackToToday.addEventListener('click', restaurarDiaAtual);
+
+function restaurarDiaAtual() {
+    dataTrabalhoAtiva = hoje;
+    queue = JSON.parse(localStorage.getItem(`nfs_${hoje}`)) || [];
+    document.getElementById('current-work-date').textContent = hoje;
+    
+    nfInput.disabled = false;
+    btnSubmit.disabled = false;
+    nfInput.placeholder = isScannerMode ? "Pode bipar agora..." : "Digite o número e clique em Registrar...";
+    btnBackToToday.classList.add('hidden');
+    
+    atualizarSelectHistorico();
+    render();
+    iaInsights.innerHTML = `🎯 <strong>Painel Pronto:</strong> Retornado ao dia de trabalho atual (<strong>${hoje}</strong>).`;
 }
 
 // Chaveador de Modos (Manual/Bipe)
 modeToggle.addEventListener('change', function() {
+    if (dataTrabalhoAtiva !== hoje) return; // Não permite alterar modo vendo o passado
+    
     isScannerMode = this.checked;
     if (isScannerMode) {
         modeLabel.textContent = "Modo Bipe (Leitor)";
@@ -57,21 +144,30 @@ modeToggle.addEventListener('change', function() {
     processarIA('', false, 'mudanca_modo');
 });
 
+// Trava o foco no input apenas se estiver no modo Bipe e no dia de Hoje
 document.addEventListener('click', (e) => {
-    // Só prende o foco se estiver no Modo Bipe e não estiver digitando na caixa da IA
-    if (isScannerMode && document.activeElement !== iaInput) {
-        nfInput.focus();
+    if (isScannerMode && dataTrabalhoAtiva === hoje) {
+        const resetarFoco = !e.target.closest('button') && 
+                            !e.target.closest('input') && 
+                            !e.target.closest('label') &&
+                            !e.target.closest('select');
+        if (resetarFoco) {
+            nfInput.focus();
+        }
     }
 });
 
-// Registro de Nota (Manual ou Bipe)
+// Entrada de notas fiscais
 entryForm.addEventListener('submit', function(e) {
     e.preventDefault();
+    if (dataTrabalhoAtiva !== hoje) return; // Trava contra gravação retroativa
+
     let rawValue = nfInput.value.trim();
     if (!rawValue) return;
 
     let cleanNumber = rawValue.replace(/\D/g, '');
 
+    // Extração do sequencial da chave de acesso (44 dígitos)
     if (cleanNumber.length === 44) {
         const numeroExtraido = cleanNumber.substring(25, 34);
         cleanNumber = parseInt(numeroExtraido, 10).toString();
@@ -98,6 +194,14 @@ entryForm.addEventListener('submit', function(e) {
     processarIA(cleanNumber, duplicada);
 });
 
+// Delegação de evento do botão confirmar impressão
+rowsContainer.addEventListener('click', (e) => {
+    if (e.target.classList.contains('btn-action-ok')) {
+        const idParaMarcar = parseFloat(e.target.getAttribute('data-id'));
+        marcarImpresso(idParaMarcar);
+    }
+});
+
 function marcarImpresso(id) {
     const item = queue.find(x => x.id === id);
     if (item) {
@@ -108,51 +212,47 @@ function marcarImpresso(id) {
     }
 }
 
+// Limpa de forma visual a visualização atual das notas impressas
 clearDoneBtn.addEventListener('click', () => {
-    // Mantém no banco do dia, mas remove visualmente limpando a exibição imediata se quiser
-    // Para um fluxo contínuo profissional, filtramos apenas as não impressas da tela atual
-    queue = queue.filter(item => !item.impresso);
-    salvarDados();
+    ocultarImpressasVisualmente = true;
     render();
     processarIA('', false, 'limpeza');
 });
 
-// INTERPRETAÇÃO DE COMANDOS DA IA (PROCESSAMENTO DE LINGUAGEM NATURAL SIMULADO)
+// Comandos de exclusão por texto da IA
 function executarComandoIA() {
     const comando = iaInput.value.toLowerCase().trim();
     if (!comando) return;
 
-    // Procura por números dentro da frase digitada (Ex: "exclua a nota 4020")
     const numerosEncontrados = comando.match(/\d+/);
 
     if (numerosEncontrados) {
         const numeroNota = numerosEncontrados[0];
         
-        // Verifica se o comando possui palavras-chave de exclusão
         if (comando.includes('excluir') || comando.includes('apagar') || comando.includes('remover') || comando.includes('deletar')) {
             const indice = queue.findIndex(item => item.numero === numeroNota);
             
             if (indice !== -1) {
-                queue.splice(indice, 1); // Remove a nota da lista
+                queue.splice(indice, 1);
                 salvarDados();
                 render();
-                iaInsights.innerHTML = `💥 <strong>Ação IA:</strong> Entendido! Localizei a nota <strong>#${numeroNota}</strong> no banco de dados de hoje e efetuei a exclusão permanente conforme solicitado.`;
+                iaInsights.innerHTML = `💥 <strong>Ação IA:</strong> Removi a nota <strong>#${numeroNota}</strong> do lote de <strong>${dataTrabalhoAtiva}</strong> com sucesso.`;
             } else {
-                iaInsights.innerHTML = `🔍 <strong>Ação IA:</strong> Você pediu para excluir a nota #${numeroNota}, mas não encontrei nenhuma nota com esse número registrada no dia de hoje (<strong>${hoje}</strong>).`;
+                iaInsights.innerHTML = `🔍 <strong>Ação IA:</strong> Não localizei a nota #${numeroNota} no histórico de <strong>${dataTrabalhoAtiva}</strong>.`;
             }
         } else {
-            iaInsights.innerHTML = `🤖 <strong>Dica da IA:</strong> Você mencionou o número #${numeroNota}. Se deseja que eu apague, digite algo como: <em>"excluir nota ${numeroNota}"</em>.`;
+            iaInsights.innerHTML = `🤖 <strong>Dica da IA:</strong> Quer remover? Digite: <em>"excluir nota ${numeroNota}"</em>.`;
         }
     } else {
-        iaInsights.innerHTML = `❓ <strong>Comando não reconhecido:</strong> Tente comandos diretos como: "excluir nota 123" ou "apagar 450".`;
+        iaInsights.innerHTML = `❓ <strong>Comando não compreendido.</strong>`;
     }
     iaInput.value = '';
 }
 
-// Ouvintes de evento da caixa da IA
 btnIaCmd.addEventListener('click', executarComandoIA);
 iaInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') executarComandoIA(); });
 
+// Constrói as linhas na tabela
 function render() {
     rowsContainer.innerHTML = '';
     let total = queue.length;
@@ -160,6 +260,8 @@ function render() {
 
     queue.forEach(item => {
         if (!item.impresso) pendentes++;
+
+        if (ocultarImpressasVisualmente && item.impresso) return;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -171,7 +273,7 @@ function render() {
                 </span>
             </td>
             <td class="text-right">
-                ${!item.impresso ? `<button class="btn-action-ok" onclick="marcarImpresso(${item.id})">✔ Confirmar Impressão</button>` : '<span style="color: var(--success); font-size: 0.85rem; font-weight:600;">✓ Processado</span>'}
+                ${!item.impresso ? `<button class="btn-action-ok" data-id="${item.id}">✔ Confirmar Impressão</button>` : '<span style="color: var(--success); font-size: 0.85rem; font-weight:600;">✓ Processado</span>'}
             </td>
         `;
         rowsContainer.appendChild(tr);
@@ -183,33 +285,36 @@ function render() {
     mEfficiency.textContent = `${ef}%`;
 }
 
+// Gera logs e avisos do painel lateral da IA
 function processarIA(numeroNota, foiDuplicada, gatilho = '') {
     const totalPendentes = queue.filter(x => !x.impresso).length;
     let log = "";
 
     if (gatilho === 'mudanca_modo') {
         log = isScannerMode 
-            ? `🤖 <strong>Modo Bipe Ativado:</strong> Travado para entrada de leitor. Dados salvos no lote do dia <strong>${hoje}</strong>.`
-            : `🤖 <strong>Modo Manual Ativado:</strong> Digite o número da nota e confirme. Tudo ficará salvo no histórico de hoje.`;
+            ? `🤖 <strong>Modo Bipe Ativado:</strong> Entrada pronta via leitor de código.`
+            : `🤖 <strong>Modo Manual Ativado:</strong> Digite e clique para registrar a NF do dia de hoje.`;
         iaInsights.innerHTML = log;
         return;
     }
 
     if (foiDuplicada) {
-        log += `🚨 <strong>Duplicidade:</strong> A nota <strong>#${numeroNota}</strong> já foi registrada hoje. Bloqueado para segurança. <br><br>`;
+        log += `🚨 <strong>Duplicidade:</strong> A nota <strong>#${numeroNota}</strong> já foi incluída hoje.`;
     } else if (numeroNota) {
-        log += `📥 <strong>Arquivado:</strong> Nota <strong>#${numeroNota}</strong> salva com sucesso na pasta do dia de hoje.`;
+        log += `📥 <strong>Arquivado:</strong> Nota <strong>#${numeroNota}</strong> registrada com sucesso.`;
+        ocultarImpressasVisualmente = false;
     } else if (gatilho === 'impressao') {
-        log += `✓ <strong>Despacho:</strong> Item marcado como impresso no banco diário.`;
+        log += `✓ <strong>Despacho:</strong> Nota fiscal updated para status impresso.`;
     } else if (gatilho === 'limpeza') {
-        log += `🧹 <strong>Filtro aplicado:</strong> Ocultando notas já impressas para despoluir sua visão de trabalho.`;
+        log += `🧹 <strong>Filtro aplicado:</strong> Ocultando itens impressos da tela para organizar sua visão.`;
     }
 
-    if (totalPendentes > 8) {
-        log += `<br><br>⚠️ <strong>Atenção:</strong> Volume de notas acumuladas está alto para o dia de hoje. Considere dar vazão às impressões.`;
+    if (totalPendentes > 8 && dataTrabalhoAtiva === hoje) {
+        log += `<br><br>⚠️ <strong>Alerta de Fluxo:</strong> Há muitas notas pendentes na fila de hoje. Realize a impressão para evitar gargalos.`;
     }
     iaInsights.innerHTML = log;
 }
 
-// Renderização inicial ao abrir a página
+// Inicializa a montagem dos componentes no primeiro carregamento
+atualizarSelectHistorico();
 render();
